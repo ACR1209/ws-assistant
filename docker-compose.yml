@@ -1,0 +1,20 @@
+services:
+  whatsapp-country-code-blocker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-country-code-blocker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SESSION_NAME: ${SESSION_NAME:-default}
+      WWEBJS_AUTH_PATH: ${WWEBJS_AUTH_PATH:-.wwebjs_auth}
+      CHROME_PATH: ${CHROME_PATH:-/usr/bin/chromium}
+      HEADLESS: ${HEADLESS:-true}
+      PORT: ${PORT:-8787}
+    shm_size: "1gb"
+    volumes:
+      - ./.wwebjs_auth:/app/.wwebjs_auth
+    ports:
+      - "${PORT:-8787}:8787"
