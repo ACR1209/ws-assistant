@@ -10,6 +10,7 @@ This app uses `whatsapp-web.js` directly (no WAHA) to auto-block senders whose p
 - Skips blocking if sender is already in your contacts
 - Blocks sender via `contact.block()`
 - Logs each decision in JSON format (`blocked` or `not_blocked`)
+- Supports an optional admin chat by phone number for bot commands
 
 ## Prerequisites
 
@@ -33,6 +34,7 @@ cp .env.example .env
 3. Edit `.env`:
 
 - Set `BLOCKED_COUNTRY_CODES` (example `47,593`)
+- Optionally set `ADMIN_PHONE` (digits only, include country code)
 - Keep `SESSION_NAME=default` unless you want a separate profile
 
 4. Start app:
@@ -74,6 +76,16 @@ docker compose down
 
 - Group chats (`@g.us`) are ignored.
 - Broadcast/status senders are ignored.
-- Messages from yourself are ignored.
+- Commands sent in your own self chat are processed.
 - Existing contacts (`isMyContact=true`) are ignored even if country code matches.
 - Session auth is persisted in `.wwebjs_auth`.
+
+## Admin Commands
+
+Your own self chat can always run commands.
+
+If `ADMIN_PHONE` is set, that phone number is also treated as admin chat and will never be auto-blocked.
+
+Available commands:
+
+- `!health` returns bot status, session name, blocked country codes, and uptime.

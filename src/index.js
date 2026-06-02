@@ -14,6 +14,8 @@ const sessionName = process.env.SESSION_NAME || "default";
 const authPath = process.env.WWEBJS_AUTH_PATH || ".wwebjs_auth";
 const chromePath = process.env.CHROME_PATH || "/usr/bin/chromium";
 const headless = String(process.env.HEADLESS || "true").toLowerCase() !== "false";
+const appStartedAt = Date.now();
+const adminPhone = normalizePhone(process.env.ADMIN_PHONE || "");
 const blockedCountryCodes = String(process.env.BLOCKED_COUNTRY_CODES || "")
   .split(",")
   .map((code) => code.trim().replace(/^\+/, ""))
@@ -111,13 +113,73 @@ function cleanupChromiumLocks() {
   }
 }
 
-app.get("/health", (_req, res) => {
-  res.json({
+function getHealthPayload() {
+  return {
     ok: true,
     status: clientStatus,
     blockedCountryCodes,
-    sessionName
-  });
+    sessionName,
+    adminConfigured: Boolean(adminPhone),
+    uptimeSec: Math.floor((Date.now() - appStartedAt) / 1000)
+  };
+}
+
+function isAdminPhone(phone) {
+  return Boolean(adminPhone) && phone === adminPhone;
+}
+
+async function isSelfChatMessage(message, senderId, phone) {
+  if (!message?.fromMe) {
+    return false;
+  }
+
+  const toId = typeof message.to === "string" ? message.to : "";
+  if (toId && toId === senderId) {
+    return true;
+  }
+
+  const toPhone = await resolvePhoneFromSenderId(toId);
+
+  return Boolean(phone) && Boolean(toPhone) && toPhone === phone;
+}
+
+async function handleAdminCommand({ message, senderId, phone }) {
+  const command = String(message.body || "").trim();
+
+  try {
+    if (!command.startsWith("!")) {
+      logMessageOutcome({ senderId, phone, action: "not_blocked", reason: "admin_no_command" });
+      return true;
+    }
+
+    if (command.toLowerCase() === "!health") {
+      const health = getHealthPayload();
+      await message.reply(
+        [
+          "health",
+          `status: ${health.status}`,
+          `session: ${health.sessionName}`,
+          `blockedCountryCodes: ${health.blockedCountryCodes.join(",") || "none"}`,
+          `uptimeSec: ${health.uptimeSec}`
+        ].join("\n")
+      );
+
+      logMessageOutcome({ senderId, phone, action: "admin_command", reason: "health" });
+      return true;
+    }
+
+    await message.reply(`Unknown admin command: ${command}`);
+    logMessageOutcome({ senderId, phone, action: "admin_command", reason: "unknown_command" });
+    return true;
+  } catch (error) {
+    console.error("Failed to process admin command", { senderId, phone, command, error: error.message });
+    logMessageOutcome({ senderId, phone, action: "not_blocked", reason: "admin_command_failed" });
+    return true;
+  }
+}
+
+app.get("/health", (_req, res) => {
+  res.json(getHealthPayload());
 });
 
 async function processIncomingMessage(message) {
@@ -125,11 +187,6 @@ async function processIncomingMessage(message) {
 
   if (!senderId) {
     logMessageOutcome({ action: "not_blocked", reason: "missing_sender" });
-    return;
-  }
-
-  if (message.fromMe) {
-    logMessageOutcome({ senderId, action: "not_blocked", reason: "from_me" });
     return;
   }
 
@@ -147,6 +204,21 @@ async function processIncomingMessage(message) {
   if (!phone) {
     const reason = senderId.endsWith("@lid") ? "lid_not_resolved" : "invalid_sender";
     logMessageOutcome({ senderId, action: "not_blocked", reason });
+    return;
+  }
+
+  if (await isSelfChatMessage(message, senderId, phone)) {
+    await handleAdminCommand({ message, senderId, phone });
+    return;
+  }
+
+  if (message.fromMe) {
+    logMessageOutcome({ senderId, phone, action: "not_blocked", reason: "from_me" });
+    return;
+  }
+
+  if (isAdminPhone(phone)) {
+    await handleAdminCommand({ message, senderId, phone });
     return;
   }
 
@@ -252,6 +324,12 @@ client.on("change_state", (state) => {
 
 client.on("message", async (message) => {
   await processIncomingMessage(message);
+});
+
+client.on("message_create", async (message) => {
+  if (message.fromMe) {
+    await processIncomingMessage(message);
+  }
 });
 
 app.listen(port, () => {
